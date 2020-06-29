@@ -1,0 +1,5 @@
+1.) virtualenv venv
+2.) venv/Scripts/activate 
+    'or' in linux: source venv/bin/activate
+3.) pip3 install -r requirements.txt
+4.) python3 app.py 
