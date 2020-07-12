@@ -8,10 +8,24 @@ import dash_html_components as html
 import plotly.graph_objs as go
 from flask import Flask, json
 from dash import Dash
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State
 import random
 import dash_table
 import dash
+import base64
+import datetime
+import io
+import difflib
+import openGlobal
+import xlrd
+import numpy as np
+from flask import send_file
+
+
+
+# Global
+
+dataframe = None
 
 external_js = [
     # jQuery, DataTables, script to initialize DataTables
@@ -58,8 +72,10 @@ colorscale_depth = [
     [0.1, '#636363'],
 ]
 
-sizeC = []
-colorC = []
+openGlobal.sizeC = []
+openGlobal.colorC = []
+openGlobal.regions={}
+openGlobal.dropdown=[]
 theme = {
     'font-family': 'Raleway',
     'background-color': '#787878',
@@ -70,54 +86,7 @@ def convert_timestamp(timestamp_ms):
     return arrow.get(timestamp_ms / 1000.0).format()
 
 
-def create_dataframe(d):
-    try:
-        lat = [x['latlng'] for x in d]
-        longL = []
-        latL = []
-        for i in lat:
-            try:
-                longL.append(i[1])
-                latL.append(i[0])
-            except:
-                longL.append(0)
-                latL.append(0)
-        dd = {
-            'Place': [x['name'] for x in d],
-            'Population': [x['population'] for x in d],
-            'Time': [x['timezones'] for x in d],
-            'Capital': [x['capital'] for x in d],
-            'Longitude': longL,
-            'Latitude': latL,
-            'area': [x['area'] for x in d],
-            'Text': []
-        }
 
-    except Exception as e:
-        print([x['name'] for x in d])
-        # html text to display when hovering
-    for i in range(len(dd['Place'])):
-        sizeC.append(random.randint(1, 5))
-        colorC.append(random.randint(1, 5))
-        text = '{}<br>{}<br>Population: {}<br>area: {} sq.km'.format(
-            dd['Time'][i], dd['Place'][i], dd['Population'][i], dd['area'][i])
-        dd['Text'].append(text)
-    print(
-        len(dd['Place']), len(dd['Population']), len(dd['Time']),
-        len(dd['Capital']), len(dd['Longitude']), len(dd['Latitude']),
-        len(dd['area']), len(dd['Text']))
-    return pd.DataFrame(dd)
-
-
-def create_metadata(d):
-    dd = {
-        'title': d['metadata']['title'],
-        'api': d['metadata']['api'],
-    }
-    return dd
-
-
-dataframe = create_dataframe(data)
 
 #metadata = create_metadata(data)
 # print(dataframe.head())
@@ -132,61 +101,6 @@ def create_header(some_string):
     return header
 
 
-def create_dropdowns():
-    drop1 = dcc.Dropdown(
-        options=[
-            {
-                'label': 'Light',
-                'value': 'light'
-            },
-            {
-                'label': 'Dark',
-                'value': 'dark'
-            },
-            {
-                'label': 'Satellite',
-                'value': 'satellite'
-            },
-        ],
-        value='dark',
-        id='dropdown-map-style',
-        className='three columns offset-by-one')
-    drop2 = dcc.Dropdown(
-        options=[
-            {
-                'label': 'World',
-                'value': 'world'
-            },
-            {
-                'label': 'Europe',
-                'value': 'europe'
-            },
-            {
-                'label': 'North America',
-                'value': 'north_america'
-            },
-            {
-                'label': 'South America',
-                'value': 'south_america'
-            },
-            {
-                'label': 'Africa',
-                'value': 'africa'
-            },
-            {
-                'label': 'Asia',
-                'value': 'asia'
-            },
-            {
-                'label': 'Oceania',
-                'value': 'oceania'
-            },
-        ],
-        value='world',
-        id='dropdown-region',
-        className='three columns offset-by-four')
-    return [drop1, drop2]
-
 
 def create_content():
     # create empty figure. It will be updated when _update_graph is triggered
@@ -195,43 +109,7 @@ def create_content():
     return content
 
 
-regions = {
-    'world': {
-        'lat': 0,
-        'lon': 0,
-        'zoom': 1
-    },
-    'europe': {
-        'lat': 50,
-        'lon': 0,
-        'zoom': 3
-    },
-    'north_america': {
-        'lat': 40,
-        'lon': -100,
-        'zoom': 2
-    },
-    'south_america': {
-        'lat': -15,
-        'lon': -60,
-        'zoom': 2
-    },
-    'africa': {
-        'lat': 0,
-        'lon': 20,
-        'zoom': 2
-    },
-    'asia': {
-        'lat': 30,
-        'lon': 100,
-        'zoom': 2
-    },
-    'oceania': {
-        'lat': -10,
-        'lon': 130,
-        'zoom': 2
-    },
-}
+
 
 app_name = 'BiosectRx 	\U0001f468\u200D\U0001f4bb'
 server = Flask(app_name)
@@ -260,18 +138,42 @@ for css in external_css:
 app.layout = html.Div(
     children=[
         create_header(app_name),
+       html.Details([
+                        html.Summary('Check Input Format 	\ud83d\udcd4'),
+			html.Div([html.Div("File can be be of .xls, .xlsx and .csv format. \n It should contains three columns.\n Download the sample excel file for more detail.",style={"margin-bottom":"1%"}),
+
+			html.A("Download Sample Excel 	\ud83d\udcbe", href="/download_excel/", style={'text-decoration': 'none', 'border': 'solid #1EAEDB 1px', 'padding':'10px 10px 10px 10px', 'color':'black'},),
+], style={"margin-bottom":"3%"}),
+
+]),
+       
+         html.Div([
+    dcc.Upload(
+        id='upload-data',
+        children=html.Div([
+            'Drag and Drop or ',
+            html.A('Select File')
+        ]),
+        style={
+            'width': '100%',
+            'height': '60px',
+            'lineHeight': '60px',
+            'borderWidth': '1px',
+            'borderStyle': 'dashed',
+            'borderRadius': '5px',
+            'textAlign': 'center',
+            'margin': '10px'
+        },
+        # Allow multiple files to be uploaded
+        multiple=True
+    ),
+   
+], className="ten columns"),
         html.
         Div(children=[
-            html.Div(
-                create_content(),
-                className='row',
-                style={
-                    "margin-top": "2%",
-                    "margin-bottom": "2%"
-                }),
             html.
             Div(html.Div(
-                [
+                [   
                     dcc.Dropdown(
                         options=[
                             {
@@ -294,75 +196,170 @@ app.layout = html.Div(
                         "         ‎‎‎‎‎‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎‏‏‎ ‎",
                         className="two columns"),
                     dcc.Dropdown(
-                        options=[
-                            {
-                                'label': 'World',
-                                'value': 'world'
-                            },
-                            {
-                                'label': 'Europe',
-                                'value': 'europe'
-                            },
-                            {
-                                'label': 'North America',
-                                'value': 'north_america'
-                            },
-                            {
-                                'label': 'South America',
-                                'value': 'south_america'
-                            },
-                            {
-                                'label': 'Africa',
-                                'value': 'africa'
-                            },
-                            {
-                                'label': 'Asia',
-                                'value': 'asia'
-                            },
-                            {
-                                'label': 'Oceania',
-                                'value': 'oceania'
-                            },
-                        ],
-                        value='world',
+                        value=openGlobal.country,
                         id='dropdown-region',
                         className='five columns'),
                 ],
                 className='row',
                 style={
-                    "margin-bottom": "2%"
+                    "margin-bottom": "18%","margin-top":"3%"
                 }),
                 className="twelve columns"),
-            dash_table.DataTable(
-                id='table123',
-                columns=[{
-                    "name": i,
-                    "id": i
-                } for i in tableDf.columns],
-                data=tableDf.to_dict("rows"),
-                style_cell_conditional=[{
-                    'if': {
-                        'column_id': c
-                    },
-                    'textAlign': 'left'
-                } for c in ['Company Name', 'Classification', "Country"]],
-                style_data_conditional=[{
-                    'if': {
-                        'row_index': 'odd'
-                    },
-                    'backgroundColor': 'rgb(248, 248, 248)'
-                }],
-                style_header={
-                    'backgroundColor': 'rgb(230, 230, 230)',
-                    'fontWeight': 'bold'
-                }),
+		 
+   
         ], ),
         # html.Hr(),
+    html.Div(id='output-data-upload',style={"margin-top":"18%"}),
     ],
     className='container',
     style={
         'font-family': theme['font-family']
     })
+
+
+
+
+def parse_contents(contents, filename, date):
+    content_type, content_string = contents.split(',')
+    decoded = base64.b64decode(content_string)
+    try:
+      if 'csv' in filename:
+          # Assume that the user uploaded a CSV file
+          df = pd.read_csv(
+              io.StringIO(decoded.decode('utf-8')))
+      elif 'xls' in filename:
+          # Assume that the user uploaded an excel file
+          df = pd.read_excel(io.BytesIO(decoded))
+      df['Country'].replace('', np.nan, inplace=True)
+      df.dropna(subset=['Country'], inplace=True)
+    except Exception as e:
+        print(e)
+        return html.Div([
+            'There was an error processing this file.'
+        ])
+
+
+    d={}
+    country=list(df['Country'])
+    classification=list(df['Classification'])
+    for i in range(len(df)):
+      if country[i] in d:
+        if classification[i] in d[country[i]]:
+          d[country[i]][classification[i]]+=1
+        else:
+          d[country[i]][classification[i]]=1
+      else:
+        d[country[i]]={}
+        d[country[i]][classification[i]]=1
+    #print(d)
+    lat = [x['latlng'] for x in data]
+    longL = []
+    latL = []
+    for i in lat:
+        try:
+            longL.append(i[1])
+            latL.append(i[0])
+        except:
+            longL.append(0)
+            latL.append(0)
+    Place=[x['name'] for x in data]
+    Population=[x['population'] for x in data]
+    Timezone=[x['timezones'] for x in data]
+    Capital=[x['capital'] for x in data]
+    Area=[x['area'] for x in data]
+    dd = {
+            'Place': [],
+            'Population': [],
+            'Time': [] ,
+            'Capital':[] ,
+            'Longitude': [],
+            'Latitude': [],
+            'area': [],
+            'Text': []
+        }
+    #print(Place)
+    print("Error")
+    flag=1
+    for k,v in d.items():
+      try:
+        c=difflib.get_close_matches(k, Place)[0]
+        exact=Place.index(c)
+        if flag==1:
+	        openGlobal.country=k
+	        flag=0
+        openGlobal.regions[k]={'lat': latL[exact],
+        'lon': longL[exact],
+        'zoom': 4}
+        openGlobal.dropdown.append({'label': k,'value': k})
+        dd['Place'].append(k)
+        dd['Population'].append(Population[exact])
+        dd['Time'].append(Timezone[exact])
+        dd['Capital'].append(Capital[exact])
+        dd['Longitude'].append(longL[exact])
+        dd['Latitude'].append(latL[exact])
+        dd['area'].append(Area[exact])
+        Text=k+"<br>"
+        for kk,vv in v.items():
+          Text+=str(kk)+" - "+str(vv)+"<br>"
+        dd['Text'].append(Text)
+        openGlobal.sizeC.append(random.randint(10, 15))
+        openGlobal.colorC.append(random.randint(10, 15))
+      except Exception as e:
+        print(e,k)
+        try:
+          c=difflib.get_close_matches(k+" of Great", Place)[0]
+          exact=Place.index(c)
+          dd['Place'].append(k)
+          openGlobal.regions[k]={'lat': latL[exact],
+          'lon': longL[exact],
+          'zoom': 4}
+          openGlobal.dropdown.append({'label': k,
+          'value': k
+          })
+          dd['Population'].append(Population[exact])
+          dd['Time'].append(Timezone[exact])
+          dd['Capital'].append(Capital[exact])
+          dd['Longitude'].append(longL[exact])
+          dd['Latitude'].append(latL[exact])
+          dd['area'].append(Area[exact])
+          Text=k+"<br>"
+          for kk,vv in v.items():
+            Text+=str(kk)+" - "+str(vv)+"<br>"
+          dd['Text'].append(Text)
+          openGlobal.sizeC.append(random.randint(10, 15))
+          openGlobal.colorC.append(random.randint(10, 15))
+
+        except Exception as e:
+          print(e,k)
+    openGlobal.child = pd.DataFrame(dd)
+
+    return 1
+  
+
+
+
+@app.callback([Output('output-data-upload', 'children'),Output('dropdown-region', 'options'),Output('dropdown-region', 'value')],
+              [Input('upload-data', 'contents')],
+              [State('upload-data', 'filename'),
+               State('upload-data', 'last_modified')])
+def update_output(list_of_contents, list_of_names, list_of_dates):
+    if list_of_contents is not None:
+        openGlobal.sizeC=[]
+        openGlobal.colorC=[]
+        openGlobal.regions={}
+        openGlobal.dropdown=[]
+        children = [
+            parse_contents(c, n, d) for c, n, d in
+            zip(list_of_contents, list_of_names, list_of_dates)]
+        
+        return [html.Div([
+          create_content()
+        ]),openGlobal.dropdown,openGlobal.country]
+    return [html.Div(),[],openGlobal.country]
+
+
+
+
 
 
 @app.callback(
@@ -372,25 +369,25 @@ app.layout = html.Div(
         Input('dropdown-region', 'value')
     ])
 def _update_graph(map_style, region):
-    dff = dataframe
+    dff = openGlobal.child
+    #print(dff)
     radius_multiplier = {'inner': 1.5, 'outer': 3}
-
     layout = go.Layout(
         title="World-Map",
         autosize=True,
         hovermode='closest',
-        height=750,
+        height=720,
         font=dict(family=theme['font-family']),
         margin=go.Margin(l=0, r=0, t=45, b=10),
         mapbox=dict(
             accesstoken=mapbox_access_token,
             bearing=0,
             center=dict(
-                lat=regions[region]['lat'],
-                lon=regions[region]['lon'],
+                lat=openGlobal.regions[region]['lat'],
+                lon=openGlobal.regions[region]['lon'],
             ),
             pitch=0,
-            zoom=regions[region]['zoom'],
+            zoom=openGlobal.regions[region]['zoom'],
             style=map_style,
         ),
     )
@@ -402,13 +399,13 @@ def _update_graph(map_style, region):
             lon=dff['Longitude'],
             mode='markers',
             marker=go.Marker(
-                size=sizeC,
+                size=openGlobal.sizeC,
                 colorscale=colorscale_magnitude,
-                color=colorC,
+                color=openGlobal.colorC,
                 opacity=1,
             ),
             text=dff['Text'],
-            # hoverinfo='text',
+            hoverinfo='text',
             showlegend=False,
         ),
         # inner circles represent depth
@@ -417,9 +414,9 @@ def _update_graph(map_style, region):
             lon=dff['Longitude'],
             mode='markers',
             marker=go.Marker(
-                size=sizeC,
+                size=openGlobal.sizeC,
                 colorscale=colorscale_depth,
-                color=colorC,
+                color=openGlobal.colorC,
                 opacity=1,
             ),
             # hovering behavior is already handled by outer circles
@@ -430,8 +427,27 @@ def _update_graph(map_style, region):
     figure = go.Figure(data=data, layout=layout)
     return figure
 
+@app.server.route('/download_excel/')
+def download_excel():
+    #Create DF
+    df = pd.read_csv("bio.csv")
+
+    #Convert DF
+    strIO = io.BytesIO()
+    excel_writer = pd.ExcelWriter(strIO, engine="xlsxwriter")
+    df.to_excel(excel_writer, sheet_name="BIO")
+    excel_writer.save()
+    excel_data = strIO.getvalue()
+    strIO.seek(0)
+
+    return send_file(strIO,
+                     attachment_filename='BIO.xlsx',
+                     as_attachment=True)
+
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run_server(debug=True, port=port, threaded=True)
+
 
