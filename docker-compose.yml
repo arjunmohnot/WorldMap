@@ -13,4 +13,3 @@ services:
     working_dir: /usr/share/WorldMap/
     environment:
       FLASK_ENV: ${FLASK_ENV}
-    command: "python3 app.py"
